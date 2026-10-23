@@ -1,0 +1,8 @@
+.env
+target/
+bin/
+*.class
+*.log
+.idea/
+.vscode/
+.DS_Store
