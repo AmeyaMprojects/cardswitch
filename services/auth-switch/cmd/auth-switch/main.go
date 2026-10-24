@@ -29,6 +29,11 @@ const (
 	codeIssuerUnavailable = "91"
 )
 
+type authorizeResponse struct {
+	issuerclient.AuthResponse
+	IssuerID string `json:"issuer_id,omitempty"`
+}
+
 type authorizeRequest struct {
 	issuerclient.AuthRequest
 	MerchantID string `json:"merchant_id"`
@@ -85,7 +90,10 @@ func main() {
 				}
 			}
 			w.WriteHeader(http.StatusBadGateway)
-			json.NewEncoder(w).Encode(issuerclient.AuthResponse{ChargeID: req.ChargeID, ResponseCode: codeIssuerUnavailable})
+			json.NewEncoder(w).Encode(authorizeResponse{
+				AuthResponse: issuerclient.AuthResponse{ChargeID: req.ChargeID, ResponseCode: codeIssuerUnavailable},
+				IssuerID:     route.IssuerID,
+			})
 			return
 		}
 
@@ -95,7 +103,7 @@ func main() {
 				log.Printf("charge %s: approval event not published: %v", req.ChargeID, err)
 			}
 		}
-		json.NewEncoder(w).Encode(resp)
+		json.NewEncoder(w).Encode(authorizeResponse{AuthResponse: resp, IssuerID: route.IssuerID})
 	})
 
 	srv := &http.Server{Addr: getenv("LISTEN_ADDR", ":8081"), Handler: mux}

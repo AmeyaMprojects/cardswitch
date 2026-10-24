@@ -1,60 +1,67 @@
 // Package main is the CardSwitch API gateway: the merchant-facing entry point.
-// It validates requests, enforces Idempotency-Key, swaps PANs for tokens via the
-// vault, and forwards authorizations to the switch.
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/AmeyaMprojects/cardswitch/services/gateway/internal/charges"
+	"github.com/AmeyaMprojects/cardswitch/services/gateway/internal/clients"
+	"github.com/AmeyaMprojects/cardswitch/services/gateway/internal/store"
 )
 
-type ChargeRequest struct {
-	MerchantID  string `json:"merchant_id"`
-	AmountMinor int64  `json:"amount_minor"`
-	Currency    string `json:"currency"`
-	PAN         string `json:"pan,omitempty"`
-	Token       string `json:"token,omitempty"`
-	ExpiryMonth int    `json:"expiry_month"`
-	ExpiryYear  int    `json:"expiry_year"`
-}
-
-type ChargeResponse struct {
-	ChargeID     string `json:"charge_id"`
-	Status       string `json:"status"` // APPROVED | DECLINED | REVERSED | PENDING
-	ResponseCode string `json:"response_code"`
-	Token        string `json:"token"`
-}
-
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	pg, err := store.NewPostgres(ctx, getenv("DATABASE_URL", "postgres://cardswitch:cardswitch@localhost:5432/cardswitch"))
+	if err != nil {
+		log.Fatalf("postgres: %v", err)
+	}
+	defer pg.Close()
+	locker := store.NewRedisLocker(getenv("REDIS_ADDR", "localhost:6379"))
+	defer locker.Close()
+
+	svc := charges.NewService(locker, pg,
+		clients.NewVault(getenv("VAULT_URL", "http://localhost:8083")),
+		clients.NewSwitch(getenv("SWITCH_URL", "http://localhost:8081")),
+		clients.NewLedger(getenv("LEDGER_URL", "http://localhost:8084")))
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	mux.HandleFunc("POST /v1/charges", handleCharge)
+	mux.HandleFunc("POST /v1/charges", func(w http.ResponseWriter, r *http.Request) {
+		var req charges.Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+			return
+		}
+		res := svc.Charge(r.Context(), r.Header.Get("Idempotency-Key"), req)
+		w.Header().Set("Content-Type", "application/json")
+		if res.Replayed {
+			w.Header().Set("Idempotent-Replayed", "true")
+		}
+		w.WriteHeader(res.HTTPStatus)
+		w.Write(res.Body)
+	})
 
-	addr := getenv("LISTEN_ADDR", ":8080")
-	log.Printf("gateway listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
-}
-
-func handleCharge(w http.ResponseWriter, r *http.Request) {
-	key := r.Header.Get("Idempotency-Key")
-	if key == "" {
-		http.Error(w, "Idempotency-Key header required", http.StatusBadRequest)
-		return
-	}
-	var req ChargeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	// TODO: 1. Redis SETNX idempotency lock keyed on (merchant_id, key)
-	// TODO: 2. tokenize PAN via tokenization-vault if raw PAN present
-	// TODO: 3. forward to auth-switch with timeout + retry
-	// TODO: 4. persist and cache response for replay on duplicate key
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(ChargeResponse{Status: "PENDING", ResponseCode: "NI"})
+	srv := &http.Server{Addr: getenv("LISTEN_ADDR", ":8080"), Handler: mux}
+	go func() {
+		log.Printf("gateway listening on %s", srv.Addr)
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	srv.Shutdown(shutdownCtx)
 }
 
 func getenv(k, def string) string {

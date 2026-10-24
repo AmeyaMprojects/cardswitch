@@ -343,7 +343,7 @@ docker run --rm -v "$PWD/services/auth-switch":/s -w /s golang:1.22-alpine go te
 - [x] Issuer simulator: per-token balances, ISO 8583 decline codes, idempotent replays, fault injection
 - [x] AES-256-GCM PAN cipher with AAD binding
 - [x] k6 load and duplicate-request scripts, chaos script
-- [ ] Gateway: Redis plus Postgres idempotency, response replay
+- [x] Gateway: Redis lock plus Postgres idempotency record, response replay, request-hash mismatch detection
 - [ ] Vault: tokenize and detokenize endpoints, HMAC dedupe, Luhn check
 - [x] Switch: issuer client with per-attempt timeout, jittered exponential backoff, per-issuer circuit breaker
 - [x] Switch: background reversals on unknown outcome (issuer-side idempotent, tombstones late auths), Kafka events keyed by merchant
