@@ -1,37 +1,33 @@
 package dev.cardswitch.ledger;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.List;
-
-/**
- * Double-entry ledger API. Every posting is a balanced set of entries
- * (sum of debits == sum of credits) written in one transaction.
- */
 @RestController
 @RequestMapping("/v1")
 public class LedgerController {
 
-    public enum Direction { DEBIT, CREDIT }
-    public record Entry(String account, Direction direction, long amountMinor) {}
-    public record PostingRequest(String idempotencyKey, String chargeId, String kind, String currency, List<Entry> entries) {}
+    private final LedgerService ledger;
 
+    public LedgerController(LedgerService ledger) {
+        this.ledger = ledger;
+    }
+
+    /** 201 for a new posting, 200 when the idempotency key was already used. */
     @PostMapping("/postings")
-    public void post(@RequestBody PostingRequest req) {
-        long debits = req.entries().stream().filter(e -> e.direction() == Direction.DEBIT).mapToLong(Entry::amountMinor).sum();
-        long credits = req.entries().stream().filter(e -> e.direction() == Direction.CREDIT).mapToLong(Entry::amountMinor).sum();
-        if (debits != credits) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "unbalanced posting");
+    public ResponseEntity<LedgerService.PostResult> post(@RequestBody Posting posting) {
+        try {
+            LedgerService.PostResult result = ledger.post(posting);
+            return ResponseEntity.status(result.duplicate() ? HttpStatus.OK : HttpStatus.CREATED).body(result);
+        } catch (LedgerService.RejectedException | IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
         }
-        // TODO: INSERT INTO transactions ... ON CONFLICT (idempotency_key) DO NOTHING,
-        // then insert entries in the same tx.
-        throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED);
     }
 
     @GetMapping("/accounts/{id}/balance")
-    public long balance(@PathVariable String id) {
-        throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED);
+    public LedgerService.Balance balance(@PathVariable String id) {
+        return ledger.balance(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 }

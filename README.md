@@ -347,7 +347,7 @@ docker run --rm -v "$PWD/services/auth-switch":/s -w /s golang:1.22-alpine go te
 - [x] Vault: tokenize, metadata lookup and allowlisted detokenize endpoints, HMAC dedupe, Luhn check
 - [x] Switch: issuer client with per-attempt timeout, jittered exponential backoff, per-issuer circuit breaker
 - [x] Switch: background reversals on unknown outcome (issuer-side idempotent, tombstones late auths), Kafka events keyed by merchant
-- [ ] Ledger: transactional postings, balance query
+- [x] Ledger: idempotent transactional postings, balance computed from entries
 - [ ] Settlement: batch builder, cutoff scheduler, reconciler
 - [ ] Integration tests with Testcontainers
 - [ ] Prometheus metrics and Grafana dashboard (latency, breaker state, reversal rate)
