@@ -161,3 +161,72 @@ func TestHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestReverse(t *testing.T) {
+	t.Run("releases an approved hold", func(t *testing.T) {
+		iss := New(10_000)
+		iss.Authorize(AuthRequest{ChargeID: "c1", Token: "tok_a", AmountMinor: 3_000})
+		if got := iss.Reverse("c1"); got.Result != ReverseReleased || got.ChargeID != "c1" {
+			t.Fatalf("Reverse = %+v, want released c1", got)
+		}
+		if got := iss.Available("tok_a"); got != 10_000 {
+			t.Fatalf("available = %d, want 10000 after release", got)
+		}
+	})
+	t.Run("second reversal is a no-op", func(t *testing.T) {
+		iss := New(10_000)
+		iss.Authorize(AuthRequest{ChargeID: "c1", Token: "tok_a", AmountMinor: 3_000})
+		iss.Reverse("c1")
+		if got := iss.Reverse("c1"); got.Result != ReverseAlreadyReversed {
+			t.Fatalf("second Reverse = %q, want %q", got.Result, ReverseAlreadyReversed)
+		}
+		if got := iss.Available("tok_a"); got != 10_000 {
+			t.Fatalf("available = %d, want 10000 (money given back once, not twice)", got)
+		}
+	})
+	t.Run("declined charge has no hold", func(t *testing.T) {
+		iss := New(1_000)
+		iss.Authorize(AuthRequest{ChargeID: "c1", Token: "tok_a", AmountMinor: 5_000})
+		if got := iss.Reverse("c1"); got.Result != ReverseNoHold {
+			t.Fatalf("Reverse = %q, want %q", got.Result, ReverseNoHold)
+		}
+		if got := iss.Available("tok_a"); got != 1_000 {
+			t.Fatalf("available = %d, want 1000 (a decline took nothing, so nothing to give back)", got)
+		}
+	})
+	t.Run("reversal before the authorization blocks it", func(t *testing.T) {
+		iss := New(10_000)
+		if got := iss.Reverse("c1"); got.Result != ReverseNoHold {
+			t.Fatalf("Reverse = %q, want %q", got.Result, ReverseNoHold)
+		}
+		late := iss.Authorize(AuthRequest{ChargeID: "c1", Token: "tok_a", AmountMinor: 3_000})
+		if late.ResponseCode != CodeDoNotHonor {
+			t.Fatalf("late authorization = %q, want %q (already reversed)", late.ResponseCode, CodeDoNotHonor)
+		}
+		if got := iss.Available("tok_a"); got != 10_000 {
+			t.Fatalf("available = %d, want 10000 (late auth must not take money)", got)
+		}
+	})
+}
+
+func TestReverseHandler(t *testing.T) {
+	iss := New(10_000)
+	iss.Authorize(AuthRequest{ChargeID: "c1", Token: "tok_a", AmountMinor: 3_000})
+	h := iss.Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/reverse", strings.NewReader(`{"charge_id":"c1"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp ReverseResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil || resp.Result != ReverseReleased {
+		t.Fatalf("resp = %+v err = %v, want released", resp, err)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/reverse", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing charge_id: status = %d, want 400", rec.Code)
+	}
+}

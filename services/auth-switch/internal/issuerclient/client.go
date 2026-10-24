@@ -124,35 +124,41 @@ func retryable(err error) bool {
 	return errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnknownOutcome)
 }
 
-// attempt makes one HTTP call to the issuer, bounded by cfg.Timeout.
+// attempt makes one authorization call to the issuer, bounded by cfg.Timeout.
 func (c *Client) attempt(ctx context.Context, baseURL string, req AuthRequest) (AuthResponse, error) {
+	var out AuthResponse
+	err := c.post(ctx, baseURL+"/v1/authorize", req, &out)
+	return out, err
+}
+
+// post sends in as JSON to url and decodes the 200 reply into out. The call
+// is bounded by cfg.Timeout and every failure is classified.
+func (c *Client) post(ctx context.Context, url string, in, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	defer cancel()
 
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(in)
 	if err != nil {
-		return AuthResponse{}, err
+		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/authorize", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return AuthResponse{}, err
+		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return AuthResponse{}, classify(0, err)
+		return classify(0, err)
 	}
 	defer resp.Body.Close()
 	if err := classify(resp.StatusCode, nil); err != nil {
-		return AuthResponse{}, err
+		return err
 	}
-
-	var out AuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return AuthResponse{}, classify(0, err)
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return classify(0, err)
 	}
-	return out, nil
+	return nil
 }
 
 // breakerFor returns the issuer's breaker, creating it on first use.
@@ -187,22 +193,68 @@ func (c *Client) call(ctx context.Context, route routing.Route, req AuthRequest)
 
 // Authorize sends req to the routed issuer, retrying transient failures up
 // to cfg.MaxRetries times with backoff between attempts.
+//
+// If any attempt ended with an unknown outcome, the returned error matches
+// ErrUnknownOutcome even when later attempts failed differently: the issuer
+// may have approved that earlier attempt, so the caller must reverse.
 func (c *Client) Authorize(ctx context.Context, route routing.Route, req AuthRequest) (AuthResponse, error) {
+	unknown := false
+	fail := func(err error) (AuthResponse, error) {
+		if unknown && !errors.Is(err, ErrUnknownOutcome) {
+			err = fmt.Errorf("%w: earlier attempt timed out: %w", ErrUnknownOutcome, err)
+		}
+		return AuthResponse{}, err
+	}
+
 	var lastErr error
 	for n := 0; n <= c.cfg.MaxRetries; n++ {
 		if n > 0 {
 			if err := c.sleep(ctx, Backoff(n-1, c.cfg.BaseBackoff, c.cfg.MaxBackoff, c.jitter)); err != nil {
-				return AuthResponse{}, err
+				return fail(err)
 			}
 		}
 		resp, err := c.call(ctx, route, req)
 		if err == nil {
 			return resp, nil
 		}
+		if errors.Is(err, ErrUnknownOutcome) {
+			unknown = true
+		}
 		if !retryable(err) {
-			return AuthResponse{}, err
+			return fail(err)
 		}
 		lastErr = err
 	}
-	return AuthResponse{}, fmt.Errorf("after %d attempts: %w", c.cfg.MaxRetries+1, lastErr)
+	return fail(fmt.Errorf("after %d attempts: %w", c.cfg.MaxRetries+1, lastErr))
+}
+
+type reverseRequest struct {
+	ChargeID string `json:"charge_id"`
+}
+
+type reverseResponse struct {
+	ChargeID string `json:"charge_id"`
+	Result   string `json:"result"`
+}
+
+// Reverse tells the issuer to cancel chargeID, retrying until the issuer
+// acknowledges or ctx ends. It deliberately skips the circuit breaker: an
+// open breaker means "stop sending new charges", but a reversal releases a
+// cardholder's money and must keep trying.
+func (c *Client) Reverse(ctx context.Context, route routing.Route, chargeID string) error {
+	for n := 0; ; n++ {
+		if n > 0 {
+			if err := c.sleep(ctx, Backoff(n-1, c.cfg.BaseBackoff, c.cfg.MaxBackoff, c.jitter)); err != nil {
+				return fmt.Errorf("reversal of %s not acknowledged after %d attempts: %w", chargeID, n, err)
+			}
+		}
+		var out reverseResponse
+		err := c.post(ctx, route.URL+"/v1/reverse", reverseRequest{ChargeID: chargeID}, &out)
+		if err == nil {
+			return nil
+		}
+		if !retryable(err) {
+			return err
+		}
+	}
 }
