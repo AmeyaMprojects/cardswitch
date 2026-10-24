@@ -62,7 +62,9 @@ services:
   tokenization-vault:
     build: ./services/tokenization-vault
     environment:
-      VAULT_MASTER_KEY: "${VAULT_MASTER_KEY}"
+      # Dev-only keys so the stack runs out of the box. Override in .env; never reuse in production.
+      VAULT_MASTER_KEY: "${VAULT_MASTER_KEY:-QGMVQTcei5+uW0e9JFKpHZ7FCXnlqKH6b5ALjBk43Sw=}"
+      VAULT_HMAC_KEY: "${VAULT_HMAC_KEY:-VGwpV8SMlV2dV9v8q6rHZyzBCW9TUVAmuNQe2JuKfHA=}"
       DB_URL: jdbc:postgresql://postgres:5432/cardswitch
     ports: ["8083:8083"]
     depends_on:
