@@ -345,7 +345,8 @@ docker run --rm -v "$PWD/services/auth-switch":/s -w /s golang:1.22-alpine go te
 - [x] k6 load and duplicate-request scripts, chaos script
 - [ ] Gateway: Redis plus Postgres idempotency, response replay
 - [ ] Vault: tokenize and detokenize endpoints, HMAC dedupe, Luhn check
-- [ ] Switch: issuer client with timeout and retry, reversal flow, Kafka producer
+- [x] Switch: issuer client with per-attempt timeout, jittered exponential backoff, per-issuer circuit breaker
+- [ ] Switch: reversal flow on unknown outcome, Kafka producer
 - [ ] Ledger: transactional postings, balance query
 - [ ] Settlement: batch builder, cutoff scheduler, reconciler
 - [ ] Integration tests with Testcontainers
