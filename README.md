@@ -340,6 +340,7 @@ docker run --rm -v "$PWD/services/auth-switch":/s -w /s golang:1.22-alpine go te
 - [x] PostgreSQL schema with a balance-checking trigger
 - [x] BIN longest-prefix routing with tests
 - [x] Circuit breaker
+- [x] Issuer simulator: per-token balances, ISO 8583 decline codes, idempotent replays, fault injection
 - [x] AES-256-GCM PAN cipher with AAD binding
 - [x] k6 load and duplicate-request scripts, chaos script
 - [ ] Gateway: Redis plus Postgres idempotency, response replay
