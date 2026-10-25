@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"sync"
 	"syscall"
@@ -22,7 +23,7 @@ import (
 // Failure classes. Callers test for them with errors.Is.
 var (
 	// ErrUnavailable: the issuer certainly did not process the request
-	// (connection refused, 503). Safe to retry.
+	// (could not connect, 503). Safe to retry.
 	ErrUnavailable = errors.New("issuer unavailable")
 	// ErrUnknownOutcome: the request may have reached the issuer and been
 	// processed (timeout, connection reset, 5xx). Retrying is safe only
@@ -102,7 +103,10 @@ func Backoff(attempt int, base, max time.Duration, jitter func() float64) time.D
 // classify turns the result of one HTTP exchange into nil or a failure class.
 func classify(status int, err error) error {
 	if err != nil {
-		if errors.Is(err, syscall.ECONNREFUSED) {
+		// Any failure while dialing (DNS lookup, refused, unreachable) means
+		// the request was never sent.
+		var opErr *net.OpError
+		if errors.Is(err, syscall.ECONNREFUSED) || (errors.As(err, &opErr) && opErr.Op == "dial") {
 			return fmt.Errorf("%w: %w", ErrUnavailable, err)
 		}
 		return fmt.Errorf("%w: %w", ErrUnknownOutcome, err)

@@ -14,8 +14,13 @@ case "${1:-}" in
   issuer-flaky)
     ISSUER_FAIL_RATE="${2:-0.3}" docker compose up -d --force-recreate issuer-sim ;;
   check-ledger)
+    echo "charges with more than one AUTH_HOLD (want 0 rows):"
     docker compose exec -T postgres psql -U cardswitch -c \
-      "SELECT idempotency_key, COUNT(*) FROM ledger_transactions GROUP BY 1 HAVING COUNT(*) > 1;" ;;
+      "SELECT charge_id, COUNT(*) FROM ledger_transactions WHERE kind = 'AUTH_HOLD' GROUP BY 1 HAVING COUNT(*) > 1;"
+    echo "unbalanced ledger transactions (want 0 rows):"
+    docker compose exec -T postgres psql -U cardswitch -c \
+      "SELECT txn_id, SUM(CASE direction WHEN 'DEBIT' THEN amount_minor ELSE -amount_minor END) AS diff
+       FROM ledger_entries GROUP BY 1 HAVING SUM(CASE direction WHEN 'DEBIT' THEN amount_minor ELSE -amount_minor END) <> 0;" ;;
   *)
     echo "usage: $0 {issuer-crash|issuer-restore|issuer-slow [ms]|issuer-flaky [rate]|check-ledger}"; exit 1 ;;
 esac

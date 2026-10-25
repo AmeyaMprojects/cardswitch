@@ -15,41 +15,57 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    # Only the gateway needs Redis, over the compose network; no host port,
+    # so it never clashes with a Redis already running on the machine.
 
   kafka:
-    image: bitnami/kafka:3.7
+    image: apache/kafka:3.8.0
     environment:
-      KAFKA_CFG_NODE_ID: 1
-      KAFKA_CFG_PROCESS_ROLES: broker,controller
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
-    ports: ["9092:9092"]
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      retries: 20
 
   gateway:
     build: ./services/gateway
     environment:
       LISTEN_ADDR: ":8080"
+      DATABASE_URL: postgres://cardswitch:cardswitch@postgres:5432/cardswitch?pool_max_conns=20
       REDIS_ADDR: redis:6379
       SWITCH_URL: http://auth-switch:8081
       VAULT_URL: http://tokenization-vault:8083
+      LEDGER_URL: http://ledger:8084
     ports: ["8080:8080"]
-    depends_on: [redis, auth-switch, tokenization-vault]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+      auth-switch: { condition: service_started }
+      tokenization-vault: { condition: service_started }
+      ledger: { condition: service_started }
 
   auth-switch:
     build: ./services/auth-switch
     environment:
       LISTEN_ADDR: ":8081"
       KAFKA_BOOTSTRAP: kafka:9092
-      LEDGER_URL: http://ledger:8084
       ISSUER_TIMEOUT_MS: "800"
       ISSUER_MAX_RETRIES: "2"
     ports: ["8081:8081"]
-    depends_on: [kafka, issuer-sim, ledger]
+    depends_on:
+      kafka: { condition: service_healthy }
+      issuer-sim: { condition: service_started }
 
   issuer-sim:
     build: ./services/issuer-sim
@@ -83,7 +99,10 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/cardswitch
       KAFKA_BOOTSTRAP: kafka:9092
+      LEDGER_URL: http://ledger:8084
+      SETTLEMENT_WINDOW_MINUTES: "${SETTLEMENT_WINDOW_MINUTES:-1}"
+      SETTLEMENT_CLOSE_CHECK_MS: "10000"
     ports: ["8085:8085"]
     depends_on:
       postgres: { condition: service_healthy }
-      kafka: { condition: service_started }
+      kafka: { condition: service_healthy }

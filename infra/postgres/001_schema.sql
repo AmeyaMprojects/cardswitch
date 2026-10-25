@@ -17,7 +17,7 @@ CREATE TABLE idempotency_keys (
     idem_key        TEXT NOT NULL,
     request_hash    BYTEA NOT NULL,       -- reject same key with different body
     response_status INT,
-    response_body   JSONB,
+    response_body   BYTEA,                -- exact bytes, so a replay is byte-identical
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (merchant_id, idem_key)
 );

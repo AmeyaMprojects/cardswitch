@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -23,6 +24,9 @@ func NewKafkaPublisher(brokers ...string) *KafkaPublisher {
 		Balancer:               &kafka.Hash{},
 		RequiredAcks:           kafka.RequireAll,
 		AllowAutoTopicCreation: true,
+		// The default 1s BatchTimeout makes every synchronous write wait up
+		// to a second for the batch to fill. Flush almost immediately instead.
+		BatchTimeout: 5 * time.Millisecond,
 	}}
 }
 

@@ -140,6 +140,9 @@ func TestKafkaPublisherConfig(t *testing.T) {
 	if w.RequiredAcks != kafka.RequireAll {
 		t.Fatalf("RequiredAcks = %v, want RequireAll so a broker crash can't lose an acked event", w.RequiredAcks)
 	}
+	if w.BatchTimeout <= 0 || w.BatchTimeout > 50*time.Millisecond {
+		t.Fatalf("BatchTimeout = %v; the 1s default adds up to a second to every authorization", w.BatchTimeout)
+	}
 	if w.Topic != "" {
 		t.Fatalf("Topic = %q; leave it empty so each message picks its own topic", w.Topic)
 	}

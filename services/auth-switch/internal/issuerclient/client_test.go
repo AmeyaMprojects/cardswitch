@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -57,6 +58,8 @@ func TestClassify(t *testing.T) {
 		{"400 rejected", 400, nil, ErrRejected},
 		{"404 rejected", 404, nil, ErrRejected},
 		{"connection refused", 0, refused, ErrUnavailable},
+		{"dns failure", 0, &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "issuer-sim", IsNotFound: true}}, ErrUnavailable},
+		{"reset after send", 0, &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}, ErrUnknownOutcome},
 		{"timeout", 0, context.DeadlineExceeded, ErrUnknownOutcome},
 	}
 	for _, tc := range tests {
